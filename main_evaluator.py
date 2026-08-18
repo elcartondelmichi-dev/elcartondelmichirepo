@@ -44,3 +44,38 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
             f"No se pudieron extraer nodos o cartas válidas del mazo. "
             f"(Cartas recibidas: {len(raw_cards)}, Nodos construidos: {x_target.size(0)})"
         )
+
+    # 3. Preparar tensores para PyTorch Geometric
+    batch = torch.zeros(x_target.size(0), dtype=torch.long).to(device)
+    x_target = x_target.to(device)
+    edge_target = edge_target.to(device)
+
+    # 4. Inferencia
+    model.eval()
+    with torch.no_grad():
+        logits = model(x_target, edge_target, batch)
+        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+
+    # 5. Mapeo NLP y conteos
+    try:
+        hallazgos = obtener_cartas_clave_por_feature(x_target, raw_cards)
+        reporte_texto = construir_reporte_humano(probs, hallazgos)
+    except Exception as e:
+        print(f"⚠️ Error generando reporte NLP: {e}")
+        reporte_texto = "No se pudo generar el reporte detallado."
+
+    # Detectar Game Changers (asumiendo que es el último feature de tu vector)
+    gc_count = int(x_target[:, -1].sum().item()) if x_target.size(1) >= len(FEATURE_NAMES) else 0
+
+    predicted_bracket = int(probs.argmax())
+
+    # 6. Retorno obligatorio para la API de FastAPI
+    return {
+        "cards_processed": len(raw_cards),
+        "nodes_built": int(x_target.size(0)),
+        "game_changers_count": gc_count,
+        "predicted_bracket_id": predicted_bracket + 1,
+        "predicted_bracket_name": BRACKET_NAMES[predicted_bracket],
+        "probabilities": {BRACKET_NAMES[i]: round(float(p) * 100, 2) for i, p in enumerate(probs)},
+        "report": reporte_texto
+    }
