@@ -13,34 +13,50 @@ from main_evaluator import evaluar_mazo_api
 ml_assets = {}
 
 def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
-    """Extrae comandantes y mainboard soportando variaciones de la API v2 de Moxfield."""
+    """Extrae comandantes y mainboard soportando todas las estructuras de Moxfield v2."""
     lines = []
+    
+    # 1. Intentar obtener 'boards' o buscar en la raíz del JSON
     boards = deck_data.get("boards", {})
     
-    # 1. Obtener Mainboard (soporta en boards o en raíz)
-    mainboard_data = boards.get("mainboard", {}) or deck_data.get("mainboard", {})
-    mainboard_cards = mainboard_data.get("cards", {}) if isinstance(mainboard_data, dict) else {}
+    # Buscar el mainboard en las distintas rutas posibles
+    mainboard_data = (
+        boards.get("mainboard", {}) or 
+        deck_data.get("mainboard", {})
+    )
     
-    # 2. Obtener Commanders (soporta plural y singular)
+    # Buscar el commander en las distintas rutas posibles (plural y singular)
     commander_data = (
         boards.get("commanders", {}) or 
         boards.get("commander", {}) or 
         deck_data.get("commanders", {}) or 
         deck_data.get("commander", {})
     )
+    
+    # Extraer los diccionarios de cartas
+    mainboard_cards = mainboard_data.get("cards", {}) if isinstance(mainboard_data, dict) else {}
     commander_cards = commander_data.get("cards", {}) if isinstance(commander_data, dict) else {}
     
+    # Unir ambas secciones
     all_cards = {**commander_cards, **mainboard_cards}
     
+    # Recorrer cartas
     for key, details in all_cards.items():
+        if not isinstance(details, dict):
+            continue
+            
         quantity = details.get("quantity", 1)
-        # Extraer nombre desde la propiedad 'card' si existe, o usar la llave directamente
+        
+        # Moxfield guarda el nombre real en details["card"]["name"] o en la llave 'key'
         card_obj = details.get("card", {})
-        card_name = card_obj.get("name") if isinstance(card_obj, dict) and card_obj.get("name") else key
-        lines.append(f"{quantity} {card_name}")
+        if isinstance(card_obj, dict) and card_obj.get("name"):
+            card_name = card_obj.get("name")
+        else:
+            card_name = key
+            
+        lines.append(f"{quantity}x {card_name}")
         
     return "\n".join(lines)
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     device = "cpu"
