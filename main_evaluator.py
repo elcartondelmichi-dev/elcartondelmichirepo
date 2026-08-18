@@ -5,7 +5,9 @@ import torch.nn.functional as F
 
 from deck_parser import parse_moxfield_deck
 from deck_graph_builder import DeckGraphBuilder
+from edh_gnn_model import EDHPowerGNN
 from mapeo_nlp import obtener_cartas_clave_por_feature, construir_reporte_humano
+
 
 BRACKET_NAMES = [
     "Bracket 1: Exhibition (Ultra-Casual)",
@@ -15,6 +17,7 @@ BRACKET_NAMES = [
     "Bracket 5: cEDH (Competitive Metagame)"
 ]
 
+# Nombres de las 23 características del vector de nodos que procesa el DeckGraphBuilder
 FEATURE_NAMES = [
     "CMC / Curva de Maná", "Es Criatura", "Es Artefacto", "Es Encantamiento",
     "Es Conjuro/Instante", "Es Tierra", "Produce Maná", "Es Tutor/Búsqueda",
@@ -24,52 +27,60 @@ FEATURE_NAMES = [
     "Azul", "Negro", "Rojo", "Game Changer Flag"
 ]
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "edh_gnn_model.pt")
+
+
 def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphBuilder, device: str = "cpu") -> dict:
-    # 1. Parsear cartas
     raw_cards = parse_moxfield_deck(deck_text)
     
-    # TRACE 1: Verificar si parse_moxfield_deck devolvió cartas
-    print(f"[DEBUG EVALUATOR] Total cartas parseadas: {len(raw_cards)}")
-    if raw_cards:
-        print(f"[DEBUG EVALUATOR] Muestra primeras 3 cartas: {raw_cards[:3]}")
-    
-    # 2. Construir el grafo
+    # 1. CONSTRUCCIÓN DEL GRAFO DESDE LA BASE DE DATOS
     x_target, edge_target = builder.build_graph_from_decklist(raw_cards)
     
-    # TRACE 2: Verificar dimensión del tensor resultante
-    print(f"[DEBUG EVALUATOR] Nodos creados en x_target: {x_target.size(0)}")
-    
     if x_target.size(0) == 0:
-        raise ValueError(
-            f"No se pudieron extraer nodos o cartas válidas del mazo. "
-            f"(Cartas recibidas: {len(raw_cards)}, Nodos construidos: {x_target.size(0)})"
-        )
+        raise ValueError("No se pudieron extraer nodos o cartas válidas del mazo.")
 
-    # 3. Preparar tensores para PyTorch Geometric
-    batch = torch.zeros(x_target.size(0), dtype=torch.long).to(device)
+    # Mover tensores al dispositivo objetivo (CPU/GPU)
     x_target = x_target.to(device)
     edge_target = edge_target.to(device)
 
-    # 4. Inferencia
+    # Contar Game Changers automáticamente desde el vector (Dimensión 23 -> índice 22)
+    game_changer_flags = x_target[:, 22]
+    gc_count = int(torch.sum(game_changer_flags).item())
+
+    # 2. CREAR TENSOR DE BATCH
+    batch_vector = torch.zeros(x_target.size(0), dtype=torch.long, device=device)
+
+    # 3. INFERENCIA PURA CON TEMPERATURA
     model.eval()
     with torch.no_grad():
-        logits = model(x_target, edge_target, batch)
-        probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+        out = model(x_target, edge_target, batch_vector)
+        
+        # Factor de temperatura: < 1.0 afila el pico de mayor confianza
+        temperatura = 0.6  
+        probs = F.softmax(out / temperatura, dim=1).cpu().numpy()[0]
 
-    # 5. Mapeo NLP y conteos
+    # 4. DIAGNÓSTICO Y EXPLICABILIDAD VECTORIAL DE LA GNN
+    feature_activations = torch.sum(x_target, dim=0).cpu().numpy()
+    top_indices = feature_activations.argsort()[::-1][:5]
+    
+    top_features = []
+    for idx in top_indices:
+        nombre_feat = FEATURE_NAMES[idx] if idx < len(FEATURE_NAMES) else f"Feature #{idx}"
+        activacion = float(feature_activations[idx])
+        top_features.append({"feature": nombre_feat, "density": round(activacion, 1)})
+
+    # 5. REPORTE NLP (Corregido fuera del bucle)
     try:
         hallazgos = obtener_cartas_clave_por_feature(x_target, raw_cards)
         reporte_texto = construir_reporte_humano(probs, hallazgos)
     except Exception as e:
-        print(f"⚠️ Error generando reporte NLP: {e}")
+        print(f"⚠️ Error al generar el reporte NLP: {e}")
         reporte_texto = "No se pudo generar el reporte detallado."
-
-    # Detectar Game Changers (asumiendo que es el último feature de tu vector)
-    gc_count = int(x_target[:, -1].sum().item()) if x_target.size(1) >= len(FEATURE_NAMES) else 0
 
     predicted_bracket = int(probs.argmax())
 
-    # 6. Retorno obligatorio para la API de FastAPI
+    # 6. RETORNO ESTRUCTURADO PARA FASTAPI
     return {
         "cards_processed": len(raw_cards),
         "nodes_built": int(x_target.size(0)),
@@ -77,5 +88,6 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
         "predicted_bracket_id": predicted_bracket + 1,
         "predicted_bracket_name": BRACKET_NAMES[predicted_bracket],
         "probabilities": {BRACKET_NAMES[i]: round(float(p) * 100, 2) for i, p in enumerate(probs)},
+        "top_features": top_features,
         "report": reporte_texto
     }
