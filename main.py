@@ -27,22 +27,20 @@ def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
                         qty = details.get("quantity", 1)
                         card_obj = details.get("card", {})
                         name = card_obj.get("name") if isinstance(card_obj, dict) and card_obj.get("name") else key
-                        lines.append(f"{qty}x {name}")
+                        lines.append(f"{qty} {name}")  # <--- SIN LA "x", SOLO ESPACIO
             elif isinstance(cartas, list):
                 for item in cartas:
                     if isinstance(item, dict):
                         qty = item.get("quantity", 1)
                         card_obj = item.get("card", {})
                         name = card_obj.get("name", "Unknown") if isinstance(card_obj, dict) else item.get("name", "Unknown")
-                        lines.append(f"{qty}x {name}")
+                        lines.append(f"{qty} {name}")  # <--- SIN LA "x", SOLO ESPACIO
 
-    # Extraer de boards (mainboard, commanders, companion, sideboards)
     boards = deck_data.get("boards", {})
     if isinstance(boards, dict):
         for board_name, board_content in boards.items():
             procesar_seccion_cartas(board_content)
 
-    # Extraer de la raíz si aplica
     for root_key in ["mainboard", "commanders", "commander", "deck"]:
         if root_key in deck_data:
             procesar_seccion_cartas(deck_data[root_key])
