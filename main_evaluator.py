@@ -60,14 +60,17 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
         temperatura = 0.6  
         probs = F.softmax(out / temperatura, dim=1).cpu().numpy()[0]
 
-    # 4. DIAGNÓSTICO Y EXPLICABILIDAD VECTORIAL DE LA GNN
+   # 4. DIAGNÓSTICO Y EXPLICABILIDAD VECTORIAL DE LA GNN
     feature_activations = torch.sum(x_target, dim=0).cpu().numpy()
-    top_indices = feature_activations.argsort()[::-1][:5]
+    
+    # Tomamos solo las primeras 23 columnas correspondientes a FEATURE_NAMES
+    valid_activations = feature_activations[:len(FEATURE_NAMES)]
+    top_indices = valid_activations.argsort()[::-1][:5]
     
     top_features = []
     for idx in top_indices:
-        nombre_feat = FEATURE_NAMES[idx] if idx < len(FEATURE_NAMES) else f"Feature #{idx}"
-        activacion = float(feature_activations[idx])
+        nombre_feat = FEATURE_NAMES[idx]
+        activacion = float(valid_activations[idx])
         top_features.append({"feature": nombre_feat, "density": round(activacion, 1)})
 
     # 5. REPORTE NLP (Corregido fuera del bucle)
