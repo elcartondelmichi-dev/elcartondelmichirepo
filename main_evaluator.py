@@ -28,52 +28,19 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
     # 1. Parsear cartas
     raw_cards = parse_moxfield_deck(deck_text)
     
+    # TRACE 1: Verificar si parse_moxfield_deck devolvió cartas
+    print(f"[DEBUG EVALUATOR] Total cartas parseadas: {len(raw_cards)}")
+    if raw_cards:
+        print(f"[DEBUG EVALUATOR] Muestra primeras 3 cartas: {raw_cards[:3]}")
+    
     # 2. Construir el grafo
     x_target, edge_target = builder.build_graph_from_decklist(raw_cards)
     
+    # TRACE 2: Verificar dimensión del tensor resultante
+    print(f"[DEBUG EVALUATOR] Nodos creados en x_target: {x_target.size(0)}")
+    
     if x_target.size(0) == 0:
-        raise ValueError("No se pudieron extraer nodos o cartas válidas del mazo.")
-
-    x_target = x_target.to(device)
-    edge_target = edge_target.to(device)
-
-    # Conteo de Game Changers (Dimensión 23 -> índice 22)
-    game_changer_flags = x_target[:, 22]
-    gc_count = int(torch.sum(game_changer_flags).item())
-
-    # 3. Batch Vector e Inferencia
-    batch_vector = torch.zeros(x_target.size(0), dtype=torch.long, device=device)
-
-    with torch.no_grad():
-        out = model(x_target, edge_target, batch_vector)
-        temperatura = 0.6  
-        probs = F.softmax(out / temperatura, dim=1).cpu().numpy()[0]
-
-    # 4. Diagnóstico de características más activas
-    feature_activations = torch.sum(x_target, dim=0).cpu().numpy()
-    top_indices = feature_activations.argsort()[::-1][:5]
-
-    top_features = []
-    for idx in top_indices:
-        nombre_feat = FEATURE_NAMES[idx] if idx < len(FEATURE_NAMES) else f"Feature #{idx}"
-        top_features.append({
-            "feature": nombre_feat,
-            "density": float(feature_activations[idx])
-        })
-
-    # 5. Reporte NLP
-    hallazgos = obtener_cartas_clave_por_feature(x_target, raw_cards)
-    reporte_texto = construir_reporte_humano(probs, hallazgos)
-
-    predicted_bracket = int(probs.argmax())
-
-    # Retorno serializable para FastAPI
-    return {
-        "cards_processed": len(raw_cards),
-        "game_changers_count": gc_count,
-        "predicted_bracket_id": predicted_bracket + 1,
-        "predicted_bracket_name": BRACKET_NAMES[predicted_bracket],
-        "probabilities": {BRACKET_NAMES[i]: round(float(p) * 100, 2) for i, p in enumerate(probs)},
-        "top_features": top_features,
-        "report": reporte_texto
-    }
+        raise ValueError(
+            f"No se pudieron extraer nodos o cartas válidas del mazo. "
+            f"(Cartas recibidas: {len(raw_cards)}, Nodos construidos: {x_target.size(0)})"
+        )
