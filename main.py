@@ -13,50 +13,44 @@ from main_evaluator import evaluar_mazo_api
 ml_assets = {}
 
 def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
-    """Extrae comandantes y mainboard soportando todas las estructuras de Moxfield v2."""
     lines = []
     
-    # 1. Intentar obtener 'boards' o buscar en la raíz del JSON
+    def procesar_seccion_cartas(seccion):
+        if not seccion:
+            return
+            
+        # Caso 1: Es un diccionario { "Card Name": { quantity: 1, card: {...} } }
+        if isinstance(seccion, dict):
+            # Si tiene la sub-llave "cards", la usamos
+            cartas = seccion.get("cards", seccion)
+            if isinstance(cartas, dict):
+                for key, details in cartas.items():
+                    if isinstance(details, dict):
+                        qty = details.get("quantity", 1)
+                        card_obj = details.get("card", {})
+                        name = card_obj.get("name") if isinstance(card_obj, dict) and card_obj.get("name") else key
+                        lines.append(f"{qty}x {name}")
+            elif isinstance(cartas, list):
+                for item in cartas:
+                    if isinstance(item, dict):
+                        qty = item.get("quantity", 1)
+                        card_obj = item.get("card", {})
+                        name = card_obj.get("name", "Unknown") if isinstance(card_obj, dict) else item.get("name", "Unknown")
+                        lines.append(f"{qty}x {name}")
+
+    # Buscar en 'boards' (mainboard, commanders, companion, sideboards)
     boards = deck_data.get("boards", {})
-    
-    # Buscar el mainboard en las distintas rutas posibles
-    mainboard_data = (
-        boards.get("mainboard", {}) or 
-        deck_data.get("mainboard", {})
-    )
-    
-    # Buscar el commander en las distintas rutas posibles (plural y singular)
-    commander_data = (
-        boards.get("commanders", {}) or 
-        boards.get("commander", {}) or 
-        deck_data.get("commanders", {}) or 
-        deck_data.get("commander", {})
-    )
-    
-    # Extraer los diccionarios de cartas
-    mainboard_cards = mainboard_data.get("cards", {}) if isinstance(mainboard_data, dict) else {}
-    commander_cards = commander_data.get("cards", {}) if isinstance(commander_data, dict) else {}
-    
-    # Unir ambas secciones
-    all_cards = {**commander_cards, **mainboard_cards}
-    
-    # Recorrer cartas
-    for key, details in all_cards.items():
-        if not isinstance(details, dict):
-            continue
-            
-        quantity = details.get("quantity", 1)
-        
-        # Moxfield guarda el nombre real en details["card"]["name"] o en la llave 'key'
-        card_obj = details.get("card", {})
-        if isinstance(card_obj, dict) and card_obj.get("name"):
-            card_name = card_obj.get("name")
-        else:
-            card_name = key
-            
-        lines.append(f"{quantity}x {card_name}")
-        
+    if isinstance(boards, dict):
+        for board_name, board_content in boards.items():
+            procesar_seccion_cartas(board_content)
+
+    # Buscar si vienen en la raíz directamente
+    for root_key in ["mainboard", "commanders", "commander", "deck"]:
+        if root_key in deck_data:
+            procesar_seccion_cartas(deck_data[root_key])
+
     return "\n".join(lines)
+    
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     device = "cpu"
@@ -102,10 +96,24 @@ def predict_power_level(request: DeckRequest):
             return {"success": False, "error": f"Moxfield devolvió HTTP {response.status_code}"}
         
         deck_data = response.json()
+        
+        # --- DIAGNÓSTICO EN CONSOLA Y EN LA RESPUESTA ---
+        print("[DEBUG MOXFIELD KEYS]:", list(deck_data.keys()))
+        
+        # Muestra cómo lucen los datos de mainboard o boards
+        sample_info = {
+            "root_keys": list(deck_data.keys()),
+            "boards_keys": list(deck_data.get("boards", {}).keys()) if "boards" in deck_data else "No 'boards' key"
+        }
+        
         deck_text = extraer_texto_desde_moxfield_json(deck_data)
         
         if not deck_text.strip():
-            return {"success": False, "error": "No se pudieron extraer cartas del JSON de Moxfield."}
+            return {
+                "success": False, 
+                "error": "No se pudieron extraer cartas del JSON de Moxfield.",
+                "debug_structure": sample_info
+            }
         
         resultado_evaluacion = evaluar_mazo_api(
             deck_text=deck_text,
