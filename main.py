@@ -19,9 +19,7 @@ def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
         if not seccion:
             return
             
-        # Caso 1: Es un diccionario { "Card Name": { quantity: 1, card: {...} } }
         if isinstance(seccion, dict):
-            # Si tiene la sub-llave "cards", la usamos
             cartas = seccion.get("cards", seccion)
             if isinstance(cartas, dict):
                 for key, details in cartas.items():
@@ -38,13 +36,13 @@ def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
                         name = card_obj.get("name", "Unknown") if isinstance(card_obj, dict) else item.get("name", "Unknown")
                         lines.append(f"{qty}x {name}")
 
-    # Buscar en 'boards' (mainboard, commanders, companion, sideboards)
+    # Extraer de boards (mainboard, commanders, companion, sideboards)
     boards = deck_data.get("boards", {})
     if isinstance(boards, dict):
         for board_name, board_content in boards.items():
             procesar_seccion_cartas(board_content)
 
-    # Buscar si vienen en la raíz directamente
+    # Extraer de la raíz si aplica
     for root_key in ["mainboard", "commanders", "commander", "deck"]:
         if root_key in deck_data:
             procesar_seccion_cartas(deck_data[root_key])
@@ -59,11 +57,11 @@ async def lifespan(app: FastAPI):
     
     builder = DeckGraphBuilder()
     
-    # Obtener dinámicamente la dimensión real del extractor para no hardcodear 26
+    # Obtener la dimensión real del extractor
     sample_vec = builder.extractor.extract_features("Sol Ring")
     in_channels = len(sample_vec) if sample_vec is not None else 23
     
-    # Instanciar arquitectura con las dimensiones reales del extractor
+    # Instanciar el modelo con PyTorch
     model = EDHPowerGNN(in_channels=in_channels, hidden_channels=64, num_classes=5).to(device)
     if os.path.exists(model_path):
         model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
@@ -96,25 +94,15 @@ def predict_power_level(request: DeckRequest):
             return {"success": False, "error": f"Moxfield devolvió HTTP {response.status_code}"}
         
         deck_data = response.json()
-        
-        # --- DIAGNÓSTICO EN CONSOLA Y EN LA RESPUESTA ---
-        print("[DEBUG MOXFIELD KEYS]:", list(deck_data.keys()))
-        
-        # Muestra cómo lucen los datos de mainboard o boards
-        sample_info = {
-            "root_keys": list(deck_data.keys()),
-            "boards_keys": list(deck_data.get("boards", {}).keys()) if "boards" in deck_data else "No 'boards' key"
-        }
-        
         deck_text = extraer_texto_desde_moxfield_json(deck_data)
         
         if not deck_text.strip():
             return {
                 "success": False, 
-                "error": "No se pudieron extraer cartas del JSON de Moxfield.",
-                "debug_structure": sample_info
+                "error": "No se pudieron extraer cartas del JSON de Moxfield."
             }
         
+        # Inferencia con la GNN
         resultado_evaluacion = evaluar_mazo_api(
             deck_text=deck_text,
             model=ml_assets["model"],
