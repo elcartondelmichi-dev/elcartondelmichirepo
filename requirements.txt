@@ -1,4 +1,6 @@
+--find-links https://download.pytorch.org/whl/torch_stable.html
+torch==2.2.0+cpu
 fastapi
 uvicorn
-curl_cffi
 pydantic
+curl-cffi
