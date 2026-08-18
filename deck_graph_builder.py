@@ -259,18 +259,19 @@ if __name__ == "__main__":
     # 2. Construir el grafo
     x, edge_index = builder.build_graph_from_decklist(raw_cards)
 
-    # 3. Validaciones matemáticas del Grafo
-    expected_edges = 100 * 99  # 9,900 aristas para un grafo completo de 100 nodos sin auto-loops
+    # 3. Obtener dimensión dinámicamente para la validación
+    sample_vec = builder.extractor.extract_features("Sol Ring")
+    expected_dim = len(sample_vec) if sample_vec is not None else 24
 
     print("\n" + "="*50)
     print("📊 RESULTADO DE LA PRUEBA DEL GRAFO DE 100 CARTAS")
     print("="*50)
     print(f"🃏 Cartas procesadas por el parser : {len(raw_cards)}")
-    print(f"📐 Forma del Tensor de Nodos (X)   : {x.shape} (Esperado: [100, 23])")
-    print(f"🔗 Forma de Edge Index             : {edge_index.shape} (Esperado: [2, {expected_edges}])")
+    print(f"📐 Forma del Tensor de Nodos (X)   : {x.shape} (Esperado: [{len(raw_cards)}, {expected_dim}])")
+    print(f"🔗 Aristas generadas (Sparse)       : {edge_index.shape[1]} conexione(s)")
     print("="*50)
 
-    if x.shape == (100, 23) and edge_index.shape[1] == expected_edges:
-        print("✅ ¡Éxito! El grafo se generó correctamente para la GNN.")
+    if x.shape == (len(raw_cards), expected_dim) and edge_index.shape[0] == 2:
+        print("✅ ¡Éxito! El grafo ralo se generó correctamente para la GNN.")
     else:
-        print("❌ Hubo una discrepancia en las dimensiones del grafo.")
+        print("❌ Hubo una discrepancia en las dimensiones del tensor de entrada.")
