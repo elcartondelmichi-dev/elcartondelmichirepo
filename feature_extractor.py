@@ -47,7 +47,7 @@ class CardFeatureExtractor:
 
     @staticmethod
     def _check_removal(oracle_text: str) -> float:
-        # Excluir explícitamente autodaño / painlands (ej. Llanowar Wastes, Mana Confluence)
+        # Excluir autodaño / painlands (ej. Llanowar Wastes, Mana Confluence)
         if "deals 1 damage to you" in oracle_text or "deals 2 damage to you" in oracle_text:
             return 0.0
 
@@ -64,19 +64,35 @@ class CardFeatureExtractor:
     @staticmethod
     def _check_cheat_mana(oracle_text: str) -> float:
         patterns = [
-            # Alternativas de casteo libre / condicional
             r"rather than pay (this spell's|its) mana cost",
-            # Atrapa Kaalia, Sneak Attack, Quicksilver Amulet, etc.
             r"put (a|an|target|any) .* (creature|permanent|artifact) .* onto the battlefield",
-            # Reanimadores
             r"return target .* from your graveyard to the battlefield"
         ]
         return 1.0 if any(re.search(p, oracle_text) for p in patterns) else 0.0
 
     @staticmethod
-    def _check_ramp(oracle_text: str) -> float:
-        # Si la carta te obliga a poner la criatura en el fondo de la biblioteca (ej. Unlucky Cabbage Merchant),
-        # suele ser un tutor / fix muy ineficiente y no ramp acelerador sostenido.
+    def _check_fast_mana_or_ritual(oracle_text: str, card_name: str, raw_cmc: float) -> float:
+        fast_mana_names = [
+            "sol ring", "mana crypt", "jeweled lotus", "lotus petal", 
+            "chrome mox", "mox diamond", "mox opal", "mana vault", 
+            "grim monolith", "dark ritual", "culling the weak", "cabal ritual"
+        ]
+        if card_name.lower() in fast_mana_names:
+            return 1.0
+        
+        if "add {" in oracle_text and raw_cmc <= 1.0 and "instant" in oracle_text:
+            return 1.0
+            
+        return 0.0
+
+    @staticmethod
+    def _check_ramp(oracle_text: str, type_line: str, is_fast_mana: float) -> float:
+        if is_fast_mana > 0.0:
+            return 0.0
+
+        if "land" in type_line and not any(k in oracle_text for k in ["put", "search", "onto the battlefield"]):
+            return 0.0
+
         if "bottom of its owner's library" in oracle_text:
             return 0.0
 
@@ -89,7 +105,6 @@ class CardFeatureExtractor:
 
     @staticmethod
     def _check_burn_ping(oracle_text: str) -> float:
-        # Excluir daño a ti mismo
         if "deals 1 damage to you" in oracle_text or "deals 2 damage to you" in oracle_text:
             return 0.0
 
@@ -113,7 +128,7 @@ class CardFeatureExtractor:
         ]
         return 1.0 if any(re.search(p, oracle_text) for p in patterns) else 0.0
 
-    # --- MÉTODO PRINCIPAL DE EXTRACCIÓN ---
+    # --- MÉTODO PRINCIPAL DE EXTRACCIÓN (28D) ---
     def extract_features(self, card_name: str) -> np.ndarray:
         conn = self._obtener_conexion()
         cursor = conn.cursor()
@@ -131,7 +146,7 @@ class CardFeatureExtractor:
         conn.close()
 
         if not row:
-            return np.zeros(26, dtype=np.float32)
+            return np.zeros(28, dtype=np.float32)
 
         cmc, colors_str, type_line, oracle_text, game_changer = row
         
@@ -163,16 +178,25 @@ class CardFeatureExtractor:
             1.0 if 'planeswalker' in type_line else 0.0,
         ]
 
-        # 4. Mecánicas (12D)
+        # 4. Mecánicas (14D)
         is_mld = self._check_mass_land_denial(oracle_text)
         is_board_wipe = 1.0 if (
             ("destroy all" in oracle_text or "exile all" in oracle_text) and not is_mld
         ) else 0.0
 
+        is_tutor = ("search your library" in oracle_text and "land" not in oracle_text)
+        is_fast_tutor = 1.0 if (is_tutor and raw_cmc <= 2.0) else 0.0
+        is_slow_tutor = 1.0 if (is_tutor and raw_cmc > 2.0) else 0.0
+
+        is_fast_mana = self._check_fast_mana_or_ritual(oracle_text, card_name, raw_cmc)
+        is_normal_ramp = self._check_ramp(oracle_text, type_line, is_fast_mana)
+
         vec_mechanics = [
-            self._check_ramp(oracle_text),
+            is_normal_ramp,
+            is_fast_mana,
             self._check_card_draw(oracle_text),
-            1.0 if ("search your library" in oracle_text and "land" not in oracle_text) else 0.0,
+            is_fast_tutor,
+            is_slow_tutor,
             self._check_removal(oracle_text),
             1.0 if ("counter target spell" in oracle_text) else 0.0,
             is_board_wipe,
@@ -187,6 +211,7 @@ class CardFeatureExtractor:
         # 5. Game Changer (1D)
         vec_game_changer = [float(game_changer or 0)]
 
+        # Vector Final: 1 + 5 + 7 + 14 + 1 = 28 Dimensiones
         return np.array(
             vec_cmc + vec_colors + vec_types + vec_mechanics + vec_game_changer, 
             dtype=np.float32
