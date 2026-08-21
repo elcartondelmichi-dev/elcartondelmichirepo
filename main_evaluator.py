@@ -29,7 +29,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "edh_gnn_model.pt")
 
 
-def evaluar_mazo(deck_text: str, model_path: str = None, device: str = None):
+def evaluar_mazo_api(deck_text: str, model_path: str = None, device: str = None):
     if device is None:
         device = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
     
