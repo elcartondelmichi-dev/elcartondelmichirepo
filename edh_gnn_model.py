@@ -4,14 +4,14 @@ import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 
 class EDHPowerGNN(nn.Module):
-    def __init__(self, in_channels=23, hidden_channels=64, num_classes=5, dropout_rate=0.2):
+    def __init__(self, in_channels=28, hidden_channels=64, num_classes=5, dropout_rate=0.2):
         """
         GNN optimizada para clasificación de nivel de poder en Commander (EDH).
         Incluye conexiones residuales y LayerNorm para prevenir Oversmoothing.
         """
         super(EDHPowerGNN, self).__init__()
         
-        # Proyección inicial para llevar las 23 características al espacio oculto
+        # Proyección inicial para llevar las 28 características al espacio oculto
         self.node_encoder = nn.Linear(in_channels, hidden_channels)
         
         # Capas de Convolución en Grafos
@@ -70,21 +70,22 @@ class EDHPowerGNN(nn.Module):
         
         return out
 
+
 # --- PRUEBA DE ESTRUCTURA Y FORMAS ---
 if __name__ == "__main__":
     num_nodes = 100
-    num_features = 23
+    num_features = 28
     
     x_dummy = torch.randn(num_nodes, num_features)
     
-    # Generamos un edge_index fully connected de 100 nodos (9900 aristas)
+    # Grafo de prueba con 100 nodos
     nodes = torch.arange(num_nodes)
     grid_x, grid_y = torch.meshgrid(nodes, nodes, indexing='ij')
     sources, targets = grid_x.flatten(), grid_y.flatten()
     mask = sources != targets
     edge_index_dummy = torch.stack([sources[mask], targets[mask]], dim=0)
     
-    model = EDHPowerGNN(in_channels=23, hidden_channels=64, num_classes=5)
+    model = EDHPowerGNN(in_channels=num_features, hidden_channels=64, num_classes=5)
     output = model(x_dummy, edge_index_dummy)
     
     print(f"✅ Formato de entrada: {x_dummy.shape}")
