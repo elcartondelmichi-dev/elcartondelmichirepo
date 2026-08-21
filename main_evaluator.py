@@ -77,7 +77,7 @@ def evaluar_mazo_api(
     
     with torch.no_grad():
         out = model(x_target, edge_target, batch_vector)
-        temperatura = 0.6  
+        temperatura = 0.3  
         probs = F.softmax(out / temperatura, dim=1).cpu().numpy()[0]
 
     # 5. Generación de Explicabilidad y Reporte
