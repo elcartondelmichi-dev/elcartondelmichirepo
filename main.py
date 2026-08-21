@@ -1,3 +1,4 @@
+# main_api.py
 import os
 import re
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from deck_graph_builder import DeckGraphBuilder
 from main_evaluator import evaluar_mazo_api
 
 ml_assets = {}
+
 
 def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
     lines = []
@@ -27,14 +29,14 @@ def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
                         qty = details.get("quantity", 1)
                         card_obj = details.get("card", {})
                         name = card_obj.get("name") if isinstance(card_obj, dict) and card_obj.get("name") else key
-                        lines.append(f"{qty} {name}")  # <--- SIN LA "x", SOLO ESPACIO
+                        lines.append(f"{qty} {name}")
             elif isinstance(cartas, list):
                 for item in cartas:
                     if isinstance(item, dict):
                         qty = item.get("quantity", 1)
                         card_obj = item.get("card", {})
                         name = card_obj.get("name", "Unknown") if isinstance(card_obj, dict) else item.get("name", "Unknown")
-                        lines.append(f"{qty} {name}")  # <--- SIN LA "x", SOLO ESPACIO
+                        lines.append(f"{qty} {name}")
 
     boards = deck_data.get("boards", {})
     if isinstance(boards, dict):
@@ -46,7 +48,8 @@ def extraer_texto_desde_moxfield_json(deck_data: dict) -> str:
             procesar_seccion_cartas(deck_data[root_key])
 
     return "\n".join(lines)
-    
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     device = "cpu"
@@ -55,9 +58,9 @@ async def lifespan(app: FastAPI):
     
     builder = DeckGraphBuilder()
     
-    # Obtener la dimensión real del extractor
+    # Obtener la dimensión real dinámicamente (Fallback ajustado a 28)
     sample_vec = builder.extractor.extract_features("Sol Ring")
-    in_channels = len(sample_vec) if sample_vec is not None else 23
+    in_channels = len(sample_vec) if sample_vec is not None else 28
     
     # Instanciar el modelo con PyTorch
     model = EDHPowerGNN(in_channels=in_channels, hidden_channels=64, num_classes=5).to(device)
@@ -72,10 +75,13 @@ async def lifespan(app: FastAPI):
     yield
     ml_assets.clear()
 
+
 app = FastAPI(lifespan=lifespan)
+
 
 class DeckRequest(BaseModel):
     deck_url: str
+
 
 @app.post("/predict")
 def predict_power_level(request: DeckRequest):
@@ -93,6 +99,7 @@ def predict_power_level(request: DeckRequest):
         
         deck_data = response.json()
         deck_text = extraer_texto_desde_moxfield_json(deck_data)
+        deck_name = deck_data.get("name", "Commander Deck")
         
         if not deck_text.strip():
             return {
@@ -100,17 +107,18 @@ def predict_power_level(request: DeckRequest):
                 "error": "No se pudieron extraer cartas del JSON de Moxfield."
             }
         
-        # Inferencia con la GNN
+        # Inferencia con la GNN pasando el nombre real del mazo
         resultado_evaluacion = evaluar_mazo_api(
             deck_text=deck_text,
             model=ml_assets["model"],
             builder=ml_assets["builder"],
-            device=ml_assets["device"]
+            device=ml_assets["device"],
+            nombre_mazo=deck_name
         )
         
         return {
             "success": True,
-            "deck_name": deck_data.get("name", "Commander Deck"),
+            "deck_name": deck_name,
             "evaluation": resultado_evaluacion
         }
         
