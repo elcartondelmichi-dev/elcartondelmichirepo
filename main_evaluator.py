@@ -90,7 +90,7 @@ def evaluar_mazo_api(
         "predicted_bracket": BRACKET_NAMES[predicted_bracket],
         "bracket_index": predicted_bracket + 1,
         "probabilities": {
-            BRACKET_NAMES[i]: float(round(p * 100, 2)) for i, p in enumerate(probs)
+            BRACKET_NAMES[i]: round(float(p * 100), 2) for i, p in enumerate(probs)
         },
         "game_changers_count": gc_count,
         "processed_cards": len(raw_cards),
