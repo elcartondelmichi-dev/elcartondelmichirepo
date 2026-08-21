@@ -6,7 +6,7 @@ import torch.nn.functional as F
 from deck_parser import parse_moxfield_deck
 from deck_graph_builder import DeckGraphBuilder
 from edh_gnn_model import EDHPowerGNN
-from mapeo_nlp import obtener_cartas_clave_por_feature, construir_reporte_humano
+from mapeo_nlp import extraer_hallazgos_28d, construir_reporte_llm
 
 
 BRACKET_NAMES = [
@@ -17,21 +17,20 @@ BRACKET_NAMES = [
     "Bracket 5: cEDH (Competitive Metagame)"
 ]
 
-# Nombres de las 23 características del vector de nodos que procesa el DeckGraphBuilder
+# Nombres exactos de las 28 características del vector de nodos (CardFeatureExtractor 28D)
 FEATURE_NAMES = [
-    "CMC / Curva de Maná", "Es Criatura", "Es Artefacto", "Es Encantamiento",
-    "Es Conjuro/Instante", "Es Tierra", "Produce Maná", "Es Tutor/Búsqueda",
-    "Es Board Wipe/Removal", "Es Motor de Robo", "Efecto Untap/Sinergia", 
-    "Potencial de Combo", "Fast Mana", "Interacción Barata", "Sinergia Tribal", 
-    "Contadores / Sinergias", "Poder/Resistencia", "Incoloro", "Blanco", 
-    "Azul", "Negro", "Rojo", "Game Changer Flag"
+    "CMC Normalizado", "Color Blanco (W)", "Color Azul (U)", "Color Negro (B)", "Color Rojo (R)", "Color Verde (G)",
+    "Es Criatura", "Es Tierra", "Es Artefacto", "Es Encantamiento", "Es Instante", "Es Conjuro", "Es Planeswalker",
+    "Ramp Tradicional", "Fast Mana / Rituals", "Motor de Robo (Draw)", "Fast Tutor (CMC <= 2)", "Slow Tutor (CMC >= 3)",
+    "Removal Directo", "Counterspell", "Board Wipe", "Turnos Extra", "Mass Land Denial (MLD)", "Spell Copy / Storm",
+    "Cheat Mana / Reanimate", "Burn / Drain / Ping", "Multiplicadores de Disparo", "Game Changer Flag"
 ]
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "edh_gnn_model.pt")
 
 
-def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphBuilder, device: str = "cpu") -> dict:
+def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphBuilder, device: str = "cpu", nombre_mazo: str = "Mazo Analizado") -> dict:
     raw_cards = parse_moxfield_deck(deck_text)
     
     # 1. CONSTRUCCIÓN DEL GRAFO DESDE LA BASE DE DATOS
@@ -40,12 +39,12 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
     if x_target.size(0) == 0:
         raise ValueError("No se pudieron extraer nodos o cartas válidas del mazo.")
 
-    # Mover tensores al dispositivo objetivo (CPU/GPU)
+    # Mover tensores al dispositivo objetivo (CPU/GPU/MPS)
     x_target = x_target.to(device)
     edge_target = edge_target.to(device)
 
-    # Contar Game Changers automáticamente desde el vector (Dimensión 23 -> índice 22)
-    game_changer_flags = x_target[:, 22]
+    # Contar Game Changers automáticamente desde el vector de 28D (Índice 27)
+    game_changer_flags = x_target[:, 27]
     gc_count = int(torch.sum(game_changer_flags).item())
 
     # 2. CREAR TENSOR DE BATCH
@@ -56,14 +55,12 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
     with torch.no_grad():
         out = model(x_target, edge_target, batch_vector)
         
-        # Factor de temperatura: < 1.0 afila el pico de mayor confianza
+        # Factor de temperatura: 0.6 para afilar el pico de mayor confianza
         temperatura = 0.6  
         probs = F.softmax(out / temperatura, dim=1).cpu().numpy()[0]
 
-   # 4. DIAGNÓSTICO Y EXPLICABILIDAD VECTORIAL DE LA GNN
+    # 4. DIAGNÓSTICO Y EXPLICABILIDAD VECTORIAL DE LA GNN (28D)
     feature_activations = torch.sum(x_target, dim=0).cpu().numpy()
-    
-    # Tomamos solo las primeras 23 columnas correspondientes a FEATURE_NAMES
     valid_activations = feature_activations[:len(FEATURE_NAMES)]
     top_indices = valid_activations.argsort()[::-1][:5]
     
@@ -73,10 +70,10 @@ def evaluar_mazo_api(deck_text: str, model: torch.nn.Module, builder: DeckGraphB
         activacion = float(valid_activations[idx])
         top_features.append({"feature": nombre_feat, "density": round(activacion, 1)})
 
-    # 5. REPORTE NLP (Corregido fuera del bucle)
+    # 5. REPORTE NLP DE 28 DIMENSIONES
     try:
-        hallazgos = obtener_cartas_clave_por_feature(x_target, raw_cards)
-        reporte_texto = construir_reporte_humano(probs, hallazgos)
+        hallazgos = extraer_hallazgos_28d(x_target, raw_cards)
+        reporte_texto = construir_reporte_llm(probs, hallazgos, nombre_mazo=nombre_mazo)
     except Exception as e:
         print(f"⚠️ Error al generar el reporte NLP: {e}")
         reporte_texto = "No se pudo generar el reporte detallado."
